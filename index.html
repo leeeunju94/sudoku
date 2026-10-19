@@ -37,6 +37,9 @@
   .notes span { display:flex; align-items:center; justify-content:center; }
   #pad { display:grid; grid-template-columns:repeat(5,1fr); gap:6px; margin-top:14px; width:min(92vw,450px); }
   #pad button { padding:10px 0; font-size:18px; }
+  #pad button[data-n] { display:flex; flex-direction:column; align-items:center; line-height:1.1; padding:6px 0; }
+  #pad button small { font-size:12px; opacity:.75; }
+  #pad button.full { opacity:.3; }
   #pad button.on { background:var(--user); color:#fff; }
   #msg { margin-top:10px; min-height:24px; font-weight:700; }
 </style>
@@ -51,7 +54,6 @@
   </select>
   <button id="new">새 게임</button>
   <button id="hint">힌트</button>
-  <button id="check">검사</button>
   <span id="timer">00:00</span>
 </div>
 <div id="board"></div>
@@ -119,15 +121,7 @@ function newGame() {
   render();
 }
 
-function conflict(i) {
-  const v = grid[i]; if (!v || given[i]) return false;
-  const r = i / 9 | 0, c = i % 9, br = r - r % 3, bc = c - c % 3;
-  for (let k = 0; k < 9; k++) {
-    const a = r * 9 + k, b = k * 9 + c, d = (br + (k / 3 | 0)) * 9 + bc + k % 3;
-    if ((a !== i && grid[a] === v) || (b !== i && grid[b] === v) || (d !== i && grid[d] === v)) return true;
-  }
-  return false;
-}
+function conflict(i) { return !given[i] && grid[i] !== 0 && grid[i] !== solution[i]; }
 
 function render() {
   const b = $('#board'); b.innerHTML = '';
@@ -151,8 +145,12 @@ function render() {
     d.onclick = () => { sel = i; render(); };
     b.appendChild(d);
   }
-  const used = Array(10).fill(0); grid.forEach(v => used[v]++);
-  document.querySelectorAll('#pad button[data-n]').forEach(btn => btn.style.opacity = used[btn.dataset.n] >= 9 ? .3 : 1);
+  const good = Array(10).fill(0); grid.forEach((v, i) => { if (v && v === solution[i]) good[v]++; });
+  document.querySelectorAll('#pad button[data-n]').forEach(btn => {
+    const left = 9 - good[btn.dataset.n];
+    btn.querySelector('small').textContent = left;
+    btn.classList.toggle('full', left === 0);
+  });
 }
 
 function put(v) {
@@ -182,7 +180,7 @@ function checkWin() {
 
 // 패드
 const pad = $('#pad');
-for (let n = 1; n <= 9; n++) { const b = document.createElement('button'); b.textContent = n; b.dataset.n = n; b.onclick = () => put(n); pad.appendChild(b); }
+for (let n = 1; n <= 9; n++) { const b = document.createElement('button'); b.innerHTML = n + '<small></small>'; b.dataset.n = n; b.onclick = () => put(n); pad.appendChild(b); }
 const del = document.createElement('button'); del.textContent = '⌫'; del.onclick = () => put(0); pad.appendChild(del);
 const nb = document.createElement('button'); nb.textContent = '메모'; nb.onclick = () => { noteMode = !noteMode; nb.classList.toggle('on', noteMode); }; pad.appendChild(nb);
 
@@ -194,12 +192,6 @@ $('#hint').onclick = () => {
   if (i < 0) { const c = grid.map((v, k) => v !== solution[k] ? k : -1).filter(k => k >= 0); if (!c.length) return; i = c[Math.random() * c.length | 0]; }
   sel = i; grid[i] = solution[i]; given[i] = true; notes[i].clear(); render(); checkWin();
 };
-$('#check').onclick = () => {
-  if (done) return;
-  const bad = grid.filter((v, i) => v && v !== solution[i]).length;
-  $('#msg').textContent = bad ? '❌ 틀린 칸이 ' + bad + '개 있어요' : '✅ 지금까지 모두 맞아요!';
-};
-
 document.addEventListener('keydown', e => {
   if (e.key >= '1' && e.key <= '9') put(+e.key);
   else if (e.key === 'Backspace' || e.key === 'Delete' || e.key === '0') put(0);
