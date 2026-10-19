@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#2563eb">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>스도쿠</title>
+<style>
+  :root { --bg:#f4f5f7; --fg:#1f2430; --cell:#fff; --line:#c5cad3; --thick:#1f2430;
+          --sel:#cfe3ff; --peer:#eaf1fb; --same:#ffe9a8; --given:#1f2430; --user:#2563eb; --err:#dc2626; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14161b; --fg:#e6e8ee; --cell:#1e222b; --line:#3a4050; --thick:#aab1c3;
+            --sel:#274a7d; --peer:#252b38; --same:#6b5a1c; --given:#e6e8ee; --user:#7aa7ff; --err:#ff6b6b; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,sans-serif;
+         display:flex; flex-direction:column; align-items:center; padding:16px; }
+  h1 { margin:8px 0; }
+  .bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:center; margin-bottom:12px; }
+  select,button { font:inherit; padding:6px 12px; border-radius:6px; border:1px solid var(--line);
+                  background:var(--cell); color:var(--fg); cursor:pointer; }
+  button:active { transform:scale(.97); }
+  #timer { font-variant-numeric:tabular-nums; min-width:56px; text-align:center; }
+  #board { display:grid; grid-template-columns:repeat(9,1fr); width:min(92vw,450px); aspect-ratio:1;
+           border:3px solid var(--thick); background:var(--line); gap:1px; }
+  .c { background:var(--cell); display:flex; align-items:center; justify-content:center; position:relative;
+       font-size:clamp(18px,5.5vw,28px); user-select:none; cursor:pointer; }
+  .c.r2,.c.r5 { margin-bottom:2px; } .c.c2,.c.c5 { margin-right:2px; }
+  .c.given { color:var(--given); font-weight:700; } .c.user { color:var(--user); }
+  .c.peer { background:var(--peer); } .c.same { background:var(--same); }
+  .c.sel { background:var(--sel); } .c.err { color:var(--err); }
+  .notes { position:absolute; inset:0; display:grid; grid-template-columns:repeat(3,1fr);
+           font-size:clamp(7px,2vw,10px); opacity:.7; text-align:center; line-height:1; padding:2px; }
+  .notes span { display:flex; align-items:center; justify-content:center; }
+  #pad { display:grid; grid-template-columns:repeat(5,1fr); gap:6px; margin-top:14px; width:min(92vw,450px); }
+  #pad button { padding:10px 0; font-size:18px; }
+  #pad button.on { background:var(--user); color:#fff; }
+  #msg { margin-top:10px; min-height:24px; font-weight:700; }
+</style>
+</head>
+<body>
+<h1>스도쿠</h1>
+<div class="bar">
+  <select id="diff">
+    <option value="36">쉬움</option>
+    <option value="46" selected>보통</option>
+    <option value="52">어려움</option>
+  </select>
+  <button id="new">새 게임</button>
+  <button id="hint">힌트</button>
+  <button id="check">검사</button>
+  <span id="timer">00:00</span>
+</div>
+<div id="board"></div>
+<div id="pad"></div>
+<div id="msg"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let solution, puzzle, grid, given, notes, sel = -1, noteMode = false, secs = 0, timer, done = false;
+
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
+function ok(g, i, v) {
+  const r = i / 9 | 0, c = i % 9, br = r - r % 3, bc = c - c % 3;
+  for (let k = 0; k < 9; k++) {
+    if (g[r * 9 + k] === v || g[k * 9 + c] === v) return false;
+    if (g[(br + (k / 3 | 0)) * 9 + bc + k % 3] === v) return false;
+  }
+  return true;
+}
+
+function fill(g) {
+  const i = g.indexOf(0);
+  if (i < 0) return true;
+  for (const v of shuffle([1,2,3,4,5,6,7,8,9])) {
+    if (ok(g, i, v)) { g[i] = v; if (fill(g)) return true; g[i] = 0; }
+  }
+  return false;
+}
+
+// 해의 개수를 2까지만 센다 (유일해 검증)
+function count(g, limit = 2) {
+  let best = -1, opts = null;
+  for (let i = 0; i < 81; i++) if (!g[i]) {
+    const o = []; for (let v = 1; v <= 9; v++) if (ok(g, i, v)) o.push(v);
+    if (!o.length) return 0;
+    if (!opts || o.length < opts.length) { best = i; opts = o; if (o.length === 1) break; }
+  }
+  if (best < 0) return 1;
+  let n = 0;
+  for (const v of opts) { g[best] = v; n += count(g, limit - n); g[best] = 0; if (n >= limit) break; }
+  return n;
+}
+
+function generate(holes) {
+  const full = Array(81).fill(0); fill(full);
+  const p = full.slice();
+  let removed = 0;
+  for (const i of shuffle([...Array(81).keys()])) {
+    if (removed >= holes) break;
+    const keep = p[i]; p[i] = 0;
+    if (count(p.slice()) === 1) removed++; else p[i] = keep;
+  }
+  return [full, p];
+}
+
+function newGame() {
+  [solution, puzzle] = generate(+$('#diff').value);
+  grid = puzzle.slice(); given = puzzle.map(v => v > 0);
+  notes = Array.from({ length: 81 }, () => new Set());
+  sel = -1; secs = 0; done = false; $('#msg').textContent = '';
+  clearInterval(timer);
+  timer = setInterval(() => { secs++; $('#timer').textContent = String(secs / 60 | 0).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0'); }, 1000);
+  $('#timer').textContent = '00:00';
+  render();
+}
+
+function conflict(i) {
+  const v = grid[i]; if (!v || given[i]) return false;
+  const r = i / 9 | 0, c = i % 9, br = r - r % 3, bc = c - c % 3;
+  for (let k = 0; k < 9; k++) {
+    const a = r * 9 + k, b = k * 9 + c, d = (br + (k / 3 | 0)) * 9 + bc + k % 3;
+    if ((a !== i && grid[a] === v) || (b !== i && grid[b] === v) || (d !== i && grid[d] === v)) return true;
+  }
+  return false;
+}
+
+function render() {
+  const b = $('#board'); b.innerHTML = '';
+  const sv = sel >= 0 ? grid[sel] : 0;
+  for (let i = 0; i < 81; i++) {
+    const r = i / 9 | 0, c = i % 9, d = document.createElement('div');
+    d.className = 'c r' + r + ' c' + c + (given[i] ? ' given' : ' user');
+    if (sel >= 0) {
+      const sr = sel / 9 | 0, sc = sel % 9;
+      if (i === sel) d.classList.add('sel');
+      else if (sv && grid[i] === sv) d.classList.add('same');
+      else if (r === sr || c === sc || ((r / 3 | 0) === (sr / 3 | 0) && (c / 3 | 0) === (sc / 3 | 0))) d.classList.add('peer');
+    }
+    if (conflict(i)) d.classList.add('err');
+    if (grid[i]) d.textContent = grid[i];
+    else if (notes[i].size) {
+      const n = document.createElement('div'); n.className = 'notes';
+      for (let v = 1; v <= 9; v++) n.innerHTML += '<span>' + (notes[i].has(v) ? v : '') + '</span>';
+      d.appendChild(n);
+    }
+    d.onclick = () => { sel = i; render(); };
+    b.appendChild(d);
+  }
+  const used = Array(10).fill(0); grid.forEach(v => used[v]++);
+  document.querySelectorAll('#pad button[data-n]').forEach(btn => btn.style.opacity = used[btn.dataset.n] >= 9 ? .3 : 1);
+}
+
+function put(v) {
+  if (done || sel < 0 || given[sel]) return;
+  if (v && noteMode) {
+    if (grid[sel]) return;
+    notes[sel].has(v) ? notes[sel].delete(v) : notes[sel].add(v);
+  } else {
+    grid[sel] = v; notes[sel].clear();
+    if (v) {
+      const r = sel / 9 | 0, c = sel % 9, br = r - r % 3, bc = c - c % 3;
+      for (let k = 0; k < 9; k++) {
+        notes[r * 9 + k].delete(v); notes[k * 9 + c].delete(v);
+        notes[(br + (k / 3 | 0)) * 9 + bc + k % 3].delete(v);
+      }
+    }
+  }
+  render(); checkWin();
+}
+
+function checkWin() {
+  if (grid.every((v, i) => v === solution[i])) {
+    done = true; clearInterval(timer);
+    $('#msg').textContent = '🎉 완료! 기록 ' + $('#timer').textContent;
+  }
+}
+
+// 패드
+const pad = $('#pad');
+for (let n = 1; n <= 9; n++) { const b = document.createElement('button'); b.textContent = n; b.dataset.n = n; b.onclick = () => put(n); pad.appendChild(b); }
+const del = document.createElement('button'); del.textContent = '⌫'; del.onclick = () => put(0); pad.appendChild(del);
+const nb = document.createElement('button'); nb.textContent = '메모'; nb.onclick = () => { noteMode = !noteMode; nb.classList.toggle('on', noteMode); }; pad.appendChild(nb);
+
+$('#new').onclick = newGame;
+$('#diff').onchange = newGame;
+$('#hint').onclick = () => {
+  if (done) return;
+  let i = sel >= 0 && !given[sel] && grid[sel] !== solution[sel] ? sel : -1;
+  if (i < 0) { const c = grid.map((v, k) => v !== solution[k] ? k : -1).filter(k => k >= 0); if (!c.length) return; i = c[Math.random() * c.length | 0]; }
+  sel = i; grid[i] = solution[i]; given[i] = true; notes[i].clear(); render(); checkWin();
+};
+$('#check').onclick = () => {
+  if (done) return;
+  const bad = grid.filter((v, i) => v && v !== solution[i]).length;
+  $('#msg').textContent = bad ? '❌ 틀린 칸이 ' + bad + '개 있어요' : '✅ 지금까지 모두 맞아요!';
+};
+
+document.addEventListener('keydown', e => {
+  if (e.key >= '1' && e.key <= '9') put(+e.key);
+  else if (e.key === 'Backspace' || e.key === 'Delete' || e.key === '0') put(0);
+  else if (e.key.toLowerCase() === 'n') { nb.click(); }
+  else if (sel >= 0 && e.key.startsWith('Arrow')) {
+    e.preventDefault();
+    const r = sel / 9 | 0, c = sel % 9;
+    const nr = Math.min(8, Math.max(0, r + (e.key === 'ArrowDown') - (e.key === 'ArrowUp')));
+    const nc = Math.min(8, Math.max(0, c + (e.key === 'ArrowRight') - (e.key === 'ArrowLeft')));
+    sel = nr * 9 + nc; render();
+  }
+});
+
+newGame();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+</script>
+</body>
+</html>
